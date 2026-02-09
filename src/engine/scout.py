@@ -26,7 +26,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # ==========================================
 SCREENSHOT_TIMEOUT = 15000       # 15s to take a full-page screenshot
 NAVIGATION_TIMEOUT = 120000      # 2 minutes max for government sites
-MAX_HYDRATION_WAIT = 15000       # Wait up to 15s for the "spinner" to stop
+MAX_HYDRATION_WAIT = 25000       # Wait up to 25s for the "spinner" to stop
+STABILITY_CHECK_INTERVAL = 1.0   # Check for DOM stability every 1s
 
 # ==========================================
 #        DRISHTI SCORING WEIGHTS
@@ -82,8 +83,7 @@ class DeepAuditor:
         const fleschKincaidEstimate = (text) => {
             const words = text.split(/\\s+/).length;
             const sentences = text.split(/[.!?]+/).length || 1;
-            // Formula: 0.39 * (words/sentences) + 11.8 * (syllables/words) - 15.59
-            // Simplified proxy for performance:
+            // Formula: 0.39 * (words/sentences) + 11.8 - simplified proxy
             return (0.39 * (words / sentences)) + 11.8; 
         };
 
@@ -292,6 +292,46 @@ def calculate_drishti_score(violations, js_errors, load_time, missing_lang, is_s
 
     return max(0, int(score))
 
+async def ensure_hydration(page):
+    """
+    Critically important function. Waits for the 'Real' DOM to load.
+    Loops until it sees meaningful content or timeouts.
+    """
+    print("[STATUS] Verifying Page Stability (Hydration Check)...")
+    
+    # List of common selectors that indicate a 'Ready' state in Gov portals
+    meaningful_selectors = [
+        "footer", 
+        "main", 
+        "[role='main']", 
+        ".container", 
+        "#content", 
+        ".footer",
+        "table",
+        "form"
+    ]
+    
+    start_wait = time.time()
+    hydrated = False
+    
+    while time.time() - start_wait < MAX_HYDRATION_WAIT / 1000:
+        for selector in meaningful_selectors:
+            try:
+                if await page.is_visible(selector, timeout=500):
+                    hydrated = True
+                    break
+            except: pass
+        
+        if hydrated:
+            # Wait one more second for layout settlement
+            await asyncio.sleep(1)
+            break
+        
+        await asyncio.sleep(1) # Poll every second
+
+    if not hydrated:
+        print("[WARN] Hydration timeout. Page might be incomplete.")
+
 # ==========================================
 #        MAIN EXECUTION ENGINE
 # ==========================================
@@ -371,11 +411,8 @@ async def run_scout(raw_input, category="Uncategorized"):
             except Exception as e:
                 print(f"[WARN] Navigation timeout (continuing partial load): {str(e)[:100]}")
 
-            # 6. SMART HYDRATION
-            # Wait for network idle to ensure SPAs (React/Angular) are ready
-            try:
-                await page.wait_for_load_state("networkidle", timeout=MAX_HYDRATION_WAIT)
-            except: pass
+            # 6. SMART HYDRATION (Critical Fix)
+            await ensure_hydration(page)
 
             load_duration = round(time.time() - start_time, 2)
             print(f"[STATUS] Page Loaded in {load_duration}s.")
@@ -404,8 +441,13 @@ async def run_scout(raw_input, category="Uncategorized"):
             axe = Axe()
             axe_results = await axe.run(page)
 
-            # 10. REMEDIATION SNIPPET EXTRACTION (HTML Evidence)
-            # Extracts code snippets for the top 5 violations to help Phase 3 agents fix them.
+            # 10. RETRY LOGIC FOR FALSE NEGATIVES (0 VIOLATIONS)
+            if len(axe_results.get("violations", [])) == 0:
+                print("[WARN] 0 Violations found. Suspected Hydration Failure. Retrying Deep Scan...")
+                await asyncio.sleep(5) # Wait 5 more seconds
+                axe_results = await axe.run(page) # Run again
+
+            # 11. REMEDIATION SNIPPET EXTRACTION (HTML Evidence)
             enhanced_violations = []
             for v in axe_results.get("violations", [])[:10]: # Top 10 violations
                 nodes = []
@@ -424,7 +466,7 @@ async def run_scout(raw_input, category="Uncategorized"):
                     "evidence": nodes
                 })
 
-            # 11. SCORING CALCULATION
+            # 12. SCORING CALCULATION
             critical_js_errors = len([l for l in console_logs if l['type'] in ['error', 'critical_error']])
             missing_lang = not deep_audit_results['legal_trust']['lang_attribute'] or deep_audit_results['legal_trust']['lang_attribute'] == "MISSING"
             is_secure = deep_audit_results['legal_trust']['is_secure_context']
@@ -441,7 +483,7 @@ async def run_scout(raw_input, category="Uncategorized"):
             
             total_mb = round(network_stats["total_size_bytes"] / (1024 * 1024), 2)
             
-            # 12. REPORT GENERATION
+            # 13. REPORT GENERATION
             report_data = {
                 "metadata": {
                     "target_url": target_url,
@@ -478,13 +520,16 @@ async def run_scout(raw_input, category="Uncategorized"):
             # Console Output for Operator
             status_label = "EXCELLENT" if drishti_score > 90 else "GOOD" if drishti_score > 70 else "POOR" if drishti_score > 50 else "CRITICAL"
 
-            print(f"[SUCCESS] REPORT SAVED: {files['json']}")
+            # --- OPERATOR DASHBOARD OUTPUT ---
+            print("\n" + "="*50)
             print(f"[DATA] DRISHTI SCORE: {drishti_score}/100 ({status_label})")
             print(f"[DATA] STACK: {tech_stack}")
             print(f"[DATA] TRACKERS: {tracker_count} | JS ERRORS: {critical_js_errors}")
+            print(f"[DATA] VIOLATIONS: {report_data['accessibility']['violations_count']}")
             print("STATUS: MISSION SUCCESS") 
+            print("="*50 + "\n")
 
-            # 13. EVIDENCE CAPTURE
+            # 14. EVIDENCE CAPTURE
             print("[STATUS] Capturing Evidence...")
             try:
                 await page.screenshot(path=files['img'], full_page=True, animations="disabled", timeout=SCREENSHOT_TIMEOUT)
