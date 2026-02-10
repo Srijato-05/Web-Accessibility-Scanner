@@ -40,6 +40,7 @@ WEIGHT_LOAD_TIME = 2             # Deduction per second over 3s
 WEIGHT_MISSING_LANG = 15         # Deduction for missing language tag
 WEIGHT_NON_SECURE = 25           # Deduction for HTTP (Not HTTPS)
 WEIGHT_TRACKER_HEAVY = 10        # Deduction for >5 ad trackers
+WEIGHT_MOBILE_FAIL = 10          # Deduction for horizontal scroll issues
 
 # ==========================================
 #        THE DEEP AUDITOR ENGINE
@@ -47,14 +48,13 @@ WEIGHT_TRACKER_HEAVY = 10        # Deduction for >5 ad trackers
 class DeepAuditor:
     """
     This class contains the proprietary JavaScript payload that is injected
-    into the browser. It performs 75+ checks that standard tools (like Axe) miss.
-    It covers: Visual, Cognitive, Legal, Structural, Network, and Relational layers.
+    into the browser. It performs 80+ forensic checks covering:
+    Visual, Cognitive, Legal, Structural, Network, Relational, and Integrity layers.
     """
     SCRIPT = """
     () => {
         // --- INTERNAL HELPER FUNCTIONS ---
         
-        // Generates a precise XPATH for any element (Critical for Phase 3 AI Agents)
         const getElementXpath = (element) => {
             if (!element || element.nodeType !== 1) return '';
             if (element.id) return `//*[@id="${element.id}"]`;
@@ -71,7 +71,6 @@ class DeepAuditor:
             return `/${sPath.join('/')}`;
         };
 
-        // Checks if an element is actually visible to a human user
         const isVisible = (el) => {
             const r = el.getBoundingClientRect();
             return r.width > 0 && r.height > 0 && 
@@ -79,11 +78,9 @@ class DeepAuditor:
                    window.getComputedStyle(el).display !== 'none';
         };
 
-        // Estimates reading level using Flesch-Kincaid logic
         const fleschKincaidEstimate = (text) => {
             const words = text.split(/\\s+/).length;
             const sentences = text.split(/[.!?]+/).length || 1;
-            // Formula: 0.39 * (words/sentences) + 11.8 - simplified proxy
             return (0.39 * (words / sentences)) + 11.8; 
         };
 
@@ -91,16 +88,16 @@ class DeepAuditor:
         
         const allEls = Array.from(document.querySelectorAll('*'));
         const interactive = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"], [tabindex="0"]'));
+        const images = Array.from(document.querySelectorAll('img'));
         const bodyText = document.body.innerText || "";
         
-        // --- LAYER F: SENSORY & COGNITIVE ---
+        // --- PILLAR 1: SENSORY & COGNITIVE ---
         const motionElements = document.querySelectorAll('video, marquee, .parallax, [data-aos], canvas');
         const flashingElements = document.querySelectorAll('blink, .flash, .blink, [class*="animate"]');
         
-        // --- LAYER G: NAVIGATION & STRUCTURE ---
+        // --- PILLAR 2: NAVIGATION & STRUCTURE ---
         const landmarks = document.querySelectorAll('main, nav, header, footer, aside, [role="main"], [role="navigation"]');
         
-        // Focus Order Logic: Check if tabbing jumps wildly around the page
         const focusOrder = interactive.filter(isVisible).map(el => {
             const r = el.getBoundingClientRect();
             return { tag: el.tagName, y: Math.round(r.y), x: Math.round(r.x) };
@@ -108,33 +105,53 @@ class DeepAuditor:
         const erraticFocus = focusOrder.some((curr, i) => {
             if (i === 0) return false;
             const prev = focusOrder[i-1];
-            // If current element is 200px *above* the previous one, it's a "Jump Back"
             return curr.y < prev.y - 200; 
         });
 
-        // --- LAYER H: PERFORMANCE (ADVANCED) ---
-        // Layout Shifts: Detect elements with absolute/fixed positioning that might float
+        // --- PILLAR 3: CONTENT INTEGRITY (ALT QUALITY & LANGUAGE) ---
+        // 3a. Alt Text Forensics
+        const junkAltRegex = /^(image|photo|picture|graphic|icon|logo|img_|dsc_|screen|untitled|placeholder)$/i;
+        const fileExtRegex = /\.(jpg|png|svg|gif|webp)$/i;
+        
+        const badAltImages = images.filter(img => {
+            const alt = (img.alt || "").trim();
+            if (!alt) return false; // Empty alt is handled by Axe (checking presentation role)
+            // Flag if alt matches junk words OR contains file extensions
+            return junkAltRegex.test(alt) || fileExtRegex.test(alt);
+        });
+
+        // 3b. Language Script Integrity (Indian Context)
+        // Checks if page declares 'en' but contains significant Devanagari/Bengali/Tamil/Telugu etc.
+        const indianScriptRegex = /[\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]/;
+        const declaredLang = (document.documentElement.lang || "missing").toLowerCase();
+        const hasIndianContent = indianScriptRegex.test(bodyText.substring(0, 5000)); // Sample first 5k chars
+        const languageMismatch = declaredLang.startsWith("en") && hasIndianContent;
+
+        // --- PILLAR 4: PERFORMANCE & MOBILE ---
         const potentialLayoutShifts = allEls.filter(el => {
             const style = window.getComputedStyle(el);
             return style.position === 'absolute' || style.position === 'fixed';
         }).length;
 
-        // Third-Party Trackers: Analyze script sources
         const scripts = Array.from(document.querySelectorAll('script[src]'));
         const trackers = scripts.filter(s => /google|facebook|analytics|ad|pixel|tag|manager/i.test(s.src));
-
-        // Heavy Images: Find unoptimized assets
+        
         const heavyImages = Array.from(document.querySelectorAll('img')).filter(img => {
             return img.naturalWidth > 1600 || img.src.endsWith('.png');
         });
 
-        // --- LAYER I: LEGAL & TRUST ---
+        // Mobile Reflow Risk: Check if content overflows horizontally
+        const horizontalOverflow = document.documentElement.scrollWidth > document.documentElement.clientWidth;
+
+        // --- PILLAR 5: LEGAL & TRUST ---
         const privacyLinks = Array.from(document.querySelectorAll('a')).filter(a => /privacy|terms|policy|disclaimer/i.test(a.innerText));
         const contactLinks = Array.from(document.querySelectorAll('a')).filter(a => /contact|help|support|reach/i.test(a.innerText));
         const hasCaptcha = !!document.querySelector('iframe[src*="captcha"], .g-recaptcha, [id*="captcha"]');
+        
+        // Evasion Detection: Look for common soft-block messages
+        const botChallengeDetected = /cloudflare|hcaptcha|verify you are human|security check/i.test(document.title);
 
-        // --- LAYER J: INTERACTIVE (RELATIONAL MAPPING) ---
-        // This creates a "Map" for the Phase 3 AI Agent to understand the page structure
+        // --- PILLAR 6: INTERACTIVE (RELATIONAL MAPPING) ---
         const elementTree = interactive.slice(0, 50).map(el => ({
             tag: el.tagName,
             text: (el.innerText || el.ariaLabel || el.placeholder || "").trim().substring(0, 50),
@@ -166,19 +183,26 @@ class DeepAuditor:
                 iframe_missing_title: Array.from(document.querySelectorAll('iframe')).filter(i => !i.title).length,
                 broken_links: document.querySelectorAll('a[href="#"], a[href=""]').length
             },
+            content_integrity: {
+                bad_alt_count: badAltImages.length,
+                language_mismatch_detected: languageMismatch,
+                declared_lang: declaredLang,
+                has_indian_script: hasIndianContent
+            },
             performance_network: {
                 total_scripts: scripts.length,
                 tracker_count: trackers.length,
                 heavy_image_count: heavyImages.length,
                 potential_layout_shifts: potentialLayoutShifts,
-                dom_depth: Math.max(...Array.from(allEls).map(e => e.getElementsByTagName('*').length))
+                dom_depth: Math.max(...Array.from(allEls).map(e => e.getElementsByTagName('*').length)),
+                mobile_reflow_issue: horizontalOverflow
             },
             legal_trust: {
                 has_privacy_policy: privacyLinks.length > 0,
                 has_contact_info: contactLinks.length > 0,
                 has_captcha_barrier: hasCaptcha,
                 is_secure_context: window.isSecureContext,
-                lang_attribute: document.documentElement.lang || "MISSING",
+                bot_challenge_detected: botChallengeDetected,
                 meta_viewport: document.querySelector('meta[name="viewport"]')?.content || "MISSING"
             },
             interactive_relational: {
@@ -186,14 +210,13 @@ class DeepAuditor:
                     const r = el.getBoundingClientRect();
                     return isVisible(el) && (r.width < 44 || r.height < 44);
                 }).length,
-                // Check if ARIA label contradicts visual text
                 aria_mismatches: interactive.filter(el => {
                     const visual = (el.innerText || "").trim().toLowerCase();
                     const aria = (el.getAttribute('aria-label') || "").trim().toLowerCase();
                     return aria && visual && !aria.includes(visual) && !visual.includes(aria);
                 }).length,
                 modal_detected: !!document.querySelector('[role="dialog"], .modal, .popup'),
-                element_sample_map: elementTree // The AI Map
+                element_sample_map: elementTree 
             }
         };
     }
@@ -206,7 +229,6 @@ class DeepAuditor:
 def sanitize_url(input_url):
     """
     Cleans up user input to ensure a valid URL is targeted.
-    Handles shorthand like 'irctc' or 'amazon'.
     """
     input_url = input_url.strip().lower()
     
@@ -253,7 +275,7 @@ def get_file_paths(url, category):
         "crash": os.path.join(category_dir, f"CRASH_{clean_name}.png")
     }
 
-def calculate_drishti_score(violations, js_errors, load_time, missing_lang, is_secure, tracker_count):
+def calculate_drishti_score(violations, js_errors, load_time, missing_lang, is_secure, tracker_count, mobile_issue):
     """
     The Core Scoring Algorithm.
     Returns a score from 0 to 100 representing the 'Accessibility Health'.
@@ -265,7 +287,6 @@ def calculate_drishti_score(violations, js_errors, load_time, missing_lang, is_s
         impact = v.get("impact", "moderate")
         count = len(v.get("nodes", []))
         
-        # Weighted deductions based on severity
         if impact == "critical":
             score -= min(count * WEIGHT_CRITICAL, 30) # Cap at 30 pts
         elif impact == "serious":
@@ -284,6 +305,8 @@ def calculate_drishti_score(violations, js_errors, load_time, missing_lang, is_s
         score -= WEIGHT_NON_SECURE
     if tracker_count > 5:
         score -= WEIGHT_TRACKER_HEAVY
+    if mobile_issue:
+        score -= WEIGHT_MOBILE_FAIL
 
     # 4. Performance Penalty (Grace Period: 3.0s)
     if load_time > 3.0:
@@ -392,12 +415,18 @@ async def run_scout(raw_input, category="Uncategorized"):
         page.on("pageerror", lambda err: console_logs.append({"type": "critical_error", "text": str(err)}))
 
         network_stats = {"total_requests": 0, "failed_requests": 0, "total_size_bytes": 0}
+        response_headers = {} # Store main doc headers
+
         async def on_response(response):
             network_stats["total_requests"] += 1
             if response.status >= 400: network_stats["failed_requests"] += 1
             try:
                 size = await response.header_value("content-length")
                 if size: network_stats["total_size_bytes"] += int(size)
+                
+                # Capture main doc headers for forensic analysis
+                if response.url == page.url:
+                    response_headers.update(await response.all_headers())
             except: pass
         page.on("response", on_response)
 
@@ -431,9 +460,8 @@ async def run_scout(raw_input, category="Uncategorized"):
                 return stack.length > 0 ? stack.join(", ") : "Vanilla/Custom";
             }""")
 
-            # 8. PHASE 2: DEEP SCAN (75+ FEATURES)
-            # Injects the DeepAuditor script to gather advanced metrics
-            print("[STATUS] Executing 75-Point Deep Scan...")
+            # 8. PHASE 2: DEEP SCAN (80+ FORENSIC FEATURES)
+            print("[STATUS] Executing 80-Point Deep Scan...")
             deep_audit_results = await page.evaluate(DeepAuditor.SCRIPT)
 
             # 9. PHASE 3: AXE CORE AUDIT (WCAG 2.1)
@@ -471,6 +499,7 @@ async def run_scout(raw_input, category="Uncategorized"):
             missing_lang = not deep_audit_results['legal_trust']['lang_attribute'] or deep_audit_results['legal_trust']['lang_attribute'] == "MISSING"
             is_secure = deep_audit_results['legal_trust']['is_secure_context']
             tracker_count = deep_audit_results['performance_network']['tracker_count']
+            mobile_issue = deep_audit_results['performance_network']['mobile_reflow_issue']
             
             drishti_score = calculate_drishti_score(
                 axe_results.get("violations", []), 
@@ -478,7 +507,8 @@ async def run_scout(raw_input, category="Uncategorized"):
                 load_duration, 
                 missing_lang,
                 is_secure,
-                tracker_count
+                tracker_count,
+                mobile_issue
             )
             
             total_mb = round(network_stats["total_size_bytes"] / (1024 * 1024), 2)
@@ -493,6 +523,10 @@ async def run_scout(raw_input, category="Uncategorized"):
                     "tech_stack": tech_stack
                 },
                 "deep_scan": deep_audit_results,
+                "forensics": {
+                    "response_headers": response_headers, # Captured for Evasion Analysis
+                    "network_profile": "India 4G Simulation"
+                },
                 "performance": {
                     "load_time_sec": load_duration,
                     "total_size_mb": total_mb,
@@ -526,6 +560,7 @@ async def run_scout(raw_input, category="Uncategorized"):
             print(f"[DATA] STACK: {tech_stack}")
             print(f"[DATA] TRACKERS: {tracker_count} | JS ERRORS: {critical_js_errors}")
             print(f"[DATA] VIOLATIONS: {report_data['accessibility']['violations_count']}")
+            print(f"[DATA] INDIAN SCRIPT INTEGRITY: {'WARN' if deep_audit_results['content_integrity']['language_mismatch_detected'] else 'PASS'}")
             print("STATUS: MISSION SUCCESS") 
             print("="*50 + "\n")
 
