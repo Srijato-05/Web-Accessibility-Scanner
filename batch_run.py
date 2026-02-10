@@ -16,13 +16,13 @@ from datetime import datetime
 TARGETS_FILE = "targets.json"
 DB_FILE = "reports/audit_data.db"
 SUMMARY_CSV = "reports/batch_summary.csv"
-# Robust path handling for cross-platform compatibility
 SCOUT_SCRIPT = os.path.join("src", "engine", "scout.py") 
 
 # Tuning
 PROCESS_TIMEOUT = 200            
 COOLDOWN_RANGE = (2, 5)          
-MAX_RETRIES = 1                  
+MAX_RETRIES = 1
+RESUME_MODE = True  # Set to False if you want to force re-scan everything
 
 # ==========================================
 #        DATABASE MANAGER (SQLite)
@@ -75,6 +75,11 @@ class AuditDatabase:
         result = self.cursor.fetchone()
         return result[0] if result else None
 
+    def get_scanned_urls(self):
+        """Returns a set of all URLs that have been successfully scanned or attempted."""
+        self.cursor.execute('SELECT DISTINCT url FROM audits')
+        return {row[0] for row in self.cursor.fetchall()}
+
     def close(self):
         self.conn.close()
 
@@ -96,7 +101,6 @@ def signal_handler(sig, frame):
 def load_targets():
     if not os.path.exists(TARGETS_FILE):
         print(f"[FATAL] Target file '{TARGETS_FILE}' not found.")
-        print("[ACTION] Please run 'python src/tools/generate_targets.py' first!")
         sys.exit(1)
     with open(TARGETS_FILE, "r") as f:
         return json.load(f)
@@ -138,16 +142,29 @@ def run_batch():
         for url in urls:
             task_queue.append((sector, url))
 
+    # [FEATURE] Resume Logic
+    scanned_urls = set()
+    if RESUME_MODE:
+        scanned_urls = db.get_scanned_urls()
+        print(f"[RESUME] Found {len(scanned_urls)} completed scans in database.")
+
     total = len(task_queue)
-    print(f"\n[SYSTEM] DRISHTI-AX ORCHESTRATOR (TITANIUM EDITION)")
-    print(f"[CONFIG] Using Python: {sys.executable}")
-    print(f"[CONFIG] Engine: {SCOUT_SCRIPT}")
-    print(f"[STATUS] Loaded {total} targets.")
+    remaining = total - len(scanned_urls) if RESUME_MODE else total
+
+    print(f"\n[SYSTEM] DRISHTI-AX ORCHESTRATOR (RESUME EDITION)")
+    print(f"[STATUS] Total Targets: {total} | Already Done: {len(scanned_urls)} | Remaining: {remaining}")
     print("-" * 80)
     time.sleep(1)
 
+    processed_count = 0
+
     for i, (sector, url) in enumerate(task_queue):
-        print(f"\n[{i + 1}/{total}] Launching Scout: {url}")
+        # [FEATURE] Skip if already done
+        if RESUME_MODE and url in scanned_urls:
+            continue
+        
+        processed_count += 1
+        print(f"\n[{processed_count}/{remaining}] Launching Scout: {url}")
         
         start_time = time.time()
         scan_result = {
@@ -158,7 +175,7 @@ def run_batch():
         
         prev_score = db.get_last_score(url)
         
-        # Prepare Environment for Subprocess
+        # Prepare Environment
         env = os.environ.copy()
         env["PYTHONPATH"] = os.getcwd() + os.pathsep + env.get("PYTHONPATH", "")
 
@@ -179,8 +196,6 @@ def run_batch():
                 stdout, stderr = current_process.communicate(timeout=PROCESS_TIMEOUT)
                 duration = round(time.time() - start_time, 2)
 
-                # [CRITICAL FIX] Updated Success Condition logic
-                # We check for returncode 0 AND look for the new output strings
                 is_success = current_process.returncode == 0
                 has_success_msg = "DRISHTI-AX SCAN RESULTS" in stdout or "EVIDENCE SAVED" in stdout
 
@@ -221,7 +236,6 @@ def run_batch():
                     if attempt == MAX_RETRIES:
                         print(f"       [FAILED] Return Code: {current_process.returncode}")
                         
-                        # Debug Output
                         if stderr:
                             print(f"\n[DEBUG RAW ERROR]:\n{stderr.strip()}")
                         elif stdout and not has_success_msg:
