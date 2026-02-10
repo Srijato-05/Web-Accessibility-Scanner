@@ -23,7 +23,7 @@ sys.path.insert(0, project_root)
 sys.path.insert(0, src_dir)
 sys.path.insert(0, utils_dir)
 
-# Import the Brain
+# Import the Brain with robust fallback
 try:
     from helpers import *
 except ImportError:
@@ -75,7 +75,7 @@ async def run_scout(raw_input, category="Uncategorized"):
     async with async_playwright() as p:
         # 1. BROWSER LAUNCH
         browser = await p.chromium.launch(
-            headless=False, 
+            headless=True,  # Running headless for speed in Swarm mode
             args=[
                 '--window-position=-32000,-32000', 
                 '--disable-blink-features=AutomationControlled', 

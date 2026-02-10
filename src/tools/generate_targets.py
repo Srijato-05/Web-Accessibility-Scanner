@@ -9,52 +9,13 @@ import random
 #        CONFIGURATION
 # ==========================================
 OUTPUT_FILE = "targets.json"
-CONCURRENT_CHECKS = 100  # High concurrency for speed
-TIMEOUT_SECONDS = 4      # Fast fail to churn through dead links
+CONCURRENT_CHECKS = 100       # High concurrency for speed
+TIMEOUT_SECONDS = 5           # Fast fail to churn through dead links
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 ]
-
-# ==========================================
-#        DATASET: THE "TITAN" SEEDS
-# ==========================================
-STATIC_TARGETS = {
-    "Central_Digital_Backbone": [
-        "https://www.india.gov.in", "https://www.mygov.in", "https://www.digitalindia.gov.in",
-        "https://uidai.gov.in", "https://myaadhaar.uidai.gov.in", "https://www.digilocker.gov.in",
-        "https://umang.gov.in", "https://www.nic.in", "https://gem.gov.in", "https://mkisan.gov.in",
-        "https://enam.gov.in", "https://csc.gov.in", "https://meity.gov.in", "https://mha.gov.in",
-        "https://mea.gov.in", "https://finmin.nic.in", "https://mod.gov.in", "https://morth.gov.in",
-        "https://mohua.gov.in", "https://tribal.nic.in", "https://socialjustice.gov.in",
-        "https://labour.gov.in", "https://powermin.gov.in", "https://mnre.gov.in", "https://pngrb.gov.in",
-        "https://commerce.gov.in", "https://dpiit.gov.in", "https://msme.gov.in", "https://corporate.gov.in",
-        "https://coal.gov.in", "https://jalshakti-dowr.gov.in", "https://education.gov.in", "https://niti.gov.in"
-    ],
-    "Finance_Banking_Critical": [
-        "https://rbi.org.in", "https://sebi.gov.in", "https://irdai.gov.in", "https://pfrda.org.in",
-        "https://incometax.gov.in", "https://gst.gov.in", "https://onlinesbi.sbi", "https://sbi.co.in",
-        "https://pnbindia.in", "https://bankofbaroda.in", "https://canarabank.com", "https://unionbankofindia.co.in",
-        "https://bankofindia.co.in", "https://indianbank.in", "https://centralbankofindia.co.in", "https://iob.in",
-        "https://ucobank.com", "https://bankofmaharashtra.in", "https://psbindia.com", "https://hdfcbank.com",
-        "https://icicibank.com", "https://axisbank.com", "https://kotak.com", "https://indusind.com",
-        "https://yesbank.in", "https://idfcfirstbank.com", "https://bandhanbank.com", "https://licindia.in",
-        "https://newindia.co.in", "https://unitedinsurance.in", "https://orientalinsurance.org.in",
-        "https://npci.org.in", "https://bhimupi.org.in", "https://rupay.co.in", "https://sidbi.in", "https://nabard.org"
-    ],
-    "Transport_Logistics": [
-        "https://irctc.co.in", "https://indianrail.gov.in", "https://indianrailways.gov.in",
-        "https://parivahan.gov.in", "https://sarathi.parivahan.gov.in", "https://fastag.ihmcl.com",
-        "https://nhai.gov.in", "https://civilaviation.gov.in", "https://dgca.gov.in", "https://airindia.com",
-        "https://indigo.in", "https://spicejet.com", "https://aai.aero", "https://newdelhiairport.in",
-        "https://csmia.adaniairports.com", "https://bengaluruairport.com", "https://hyderabad.aero",
-        "https://delhimetrorail.com", "https://english.bmrc.co.in", "https://ltmetro.com", "https://cmrl.in",
-        "https://kmrl.co.in", "https://mmrda.maharashtra.gov.in", "https://mahametro.org", "https://lmrcl.com",
-        "https://nmrcnoida.com", "https://upsrtc.com", "https://msrtc.gov.in", "https://ksrtc.in",
-        "https://apsrtconline.in", "https://tsrtconline.in", "https://gsrtc.in", "https://rsrtconline.rajasthan.gov.in"
-    ]
-}
 
 # ==========================================
 #        DATASET: LOGIC MULTIPLIERS
@@ -159,114 +120,109 @@ DISTRICTS = [
 ]
 
 # ==========================================
-#        INTELLIGENT VALIDATION ENGINE
+#        VALIDATION LOGIC
 # ==========================================
 
 async def check_target(session, url):
     """
-    Pings a URL to see if it is alive. 
-    Returns the URL if 200 OK or 403 Forbidden (Valid but blocked).
+    Tries to connect to a URL. Returns the URL if it's alive (200-399 or 403).
+    403 is considered 'Alive' because it means the server exists but blocks bots (valid target for stealth).
     """
     try:
-        # HEAD request is faster, but some servers block it. 
-        # If HEAD fails with 405, we try GET.
-        async with session.head(url, timeout=TIMEOUT_SECONDS, allow_redirects=True) as resp:
-            if resp.status < 400:
-                print(f"[ALIVE] {url}")
+        # We use HEAD to be fast, but some servers block HEAD, so we might need GET if HEAD fails with 405
+        # For speed, we stick to HEAD with a strict timeout.
+        async with session.head(url, timeout=TIMEOUT_SECONDS, allow_redirects=True, ssl=False) as resp:
+            # 200: OK, 3xx: Redirect, 403: Forbidden (Firewall exists), 406: Not Acceptable
+            if resp.status < 400 or resp.status in [403, 406]:
                 return url
-            elif resp.status in [403, 406]:
-                print(f"[WAF] {url} (Protected)")
-                return url
-            elif resp.status == 405: # Method Not Allowed, try GET
-                async with session.get(url, timeout=TIMEOUT_SECONDS) as resp_get:
-                    if resp_get.status < 400:
-                        print(f"[ALIVE] {url}")
-                        return url
     except:
-        pass # Dead link, ignore
+        pass
     return None
 
 async def validate_targets_parallel(raw_targets):
     """
-    Orchestrates the massive parallel validation.
+    Validates a massive list of URLs concurrently using aiohttp.
     """
-    valid_targets = []
-    # Deduplicate first
-    unique_targets = list(set(raw_targets))
-    print(f"[INFO] Unique candidates to validate: {len(unique_targets)}")
+    unique = list(set(raw_targets))
+    print(f"[INFO] Generating Permutations: {len(unique)} candidates generated.")
+    print(f"[INFO] Starting Swarm Validation (Concurrent Limit: {CONCURRENT_CHECKS})...")
     
+    valid_targets = []
+    
+    # Randomize User Agent for each session to reduce block rate
     async with aiohttp.ClientSession(headers={"User-Agent": random.choice(USER_AGENTS)}) as session:
-        # Process in chunks to avoid blowing up the OS socket limit
-        chunk_size = CONCURRENT_CHECKS
-        for i in range(0, len(unique_targets), chunk_size):
-            chunk = unique_targets[i:i+chunk_size]
-            tasks = [check_target(session, url) for url in chunk]
+        # Process in chunks to respect OS file descriptor limits
+        total = len(unique)
+        for i in range(0, total, CONCURRENT_CHECKS):
+            chunk = unique[i:i+CONCURRENT_CHECKS]
+            tasks = [check_target(session, u) for u in chunk]
+            
+            # Run chunk concurrently
             results = await asyncio.gather(*tasks)
             
-            # Filter None
-            alive = [r for r in results if r]
-            valid_targets.extend(alive)
+            # Filter None values
+            alive_in_chunk = [r for r in results if r]
+            valid_targets.extend(alive_in_chunk)
             
             # Progress Bar
-            sys.stdout.write(f"\r[STATUS] Validated: {len(valid_targets)} / Scanned: {i+len(chunk)}")
+            percent = round(((i + len(chunk)) / total) * 100, 1)
+            sys.stdout.write(f"\r[STATUS] Progress: {percent}% | Checked: {i+len(chunk)}/{total} | Alive: {len(valid_targets)}")
             sys.stdout.flush()
             
-    print("\n")
+            # Tiny sleep to let the event loop breathe
+            await asyncio.sleep(0.1)
+            
+    print(f"\n[INFO] Validation Complete. Final Count: {len(valid_targets)}")
     return valid_targets
 
 def generate_and_validate():
-    final_list = STATIC_TARGETS.copy()
+    """
+    Main Orchestrator
+    """
+    print(f"[SYSTEM] DRISHTI-AX TARGET GENERATOR (God Mode)")
+    print("=" * 60)
     
-    # 1. PERMUTATION: State Departments (~1,000 URLs)
-    print("[GEN] Generating State Department Candidates...")
-    state_candidates = []
-    for state in STATES:
-        for dept in DEPARTMENTS:
-            state_candidates.append(f"https://{dept}.{state}.gov.in")
-            state_candidates.append(f"https://{state}{dept}.gov.in")
+    final_dict = STATIC_TARGETS.copy()
+    raw_candidates = []
 
-    # 2. PERMUTATION: District Portals & Services (~3,000 URLs)
-    print("[GEN] Generating District Portal Candidates...")
-    district_candidates = []
-    for dist in DISTRICTS:
-        # Standard NIC format (most common)
-        district_candidates.append(f"https://{dist}.nic.in")
-        district_candidates.append(f"https://{dist}.gov.in")
-        # Police & Court subdomains
-        district_candidates.append(f"https://{dist}police.gov.in")
-        district_candidates.append(f"https://districts.ecourts.gov.in/{dist}")
+    # 1. State x Department Permutations
+    print("[1/3] Permuting State Departments...")
+    for s in STATES:
+        for d in DEPARTMENTS:
+            raw_candidates.append(f"https://{d}.{s}.gov.in")
+            raw_candidates.append(f"https://{d}.{s}.nic.in")
 
-    # 3. COMBINE ALL DYNAMIC CANDIDATES
-    all_dynamic = state_candidates + district_candidates
+    # 2. District Permutations
+    print("[2/3] Permuting District Portals...")
+    for d in DISTRICTS:
+        # Common patterns for district sites
+        raw_candidates.append(f"https://{d}.nic.in")
+        raw_candidates.append(f"https://{d}.gov.in")
+        raw_candidates.append(f"https://{d}police.gov.in")
+        raw_candidates.append(f"https://districts.ecourts.gov.in/{d}")
+
+    # 3. Validate
+    print("[3/3] Validating Candidates...")
     
-    # 4. EXECUTE INTELLIGENT VALIDATION
+    # Fix for Windows Event Loop - Use Selector for Network I/O
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     
-    print("-" * 50)
-    print(f"[START] Beginning Concurrent Network Scan of {len(all_dynamic)} targets...")
-    live_dynamic = asyncio.run(validate_targets_parallel(all_dynamic))
+    live_targets = asyncio.run(validate_targets_parallel(raw_candidates))
     
-    # 5. RE-CATEGORIZE & SAVE
-    final_list["State_Departments_Verified"] = [u for u in live_dynamic if u in state_candidates]
-    final_list["District_Services_Verified"] = [u for u in live_dynamic if u in district_candidates]
+    # Categorize results
+    final_dict["State_Dept_Verified"] = sorted([u for u in live_targets if any(x in u for x in DEPARTMENTS)])
+    final_dict["District_Verified"] = sorted([u for u in live_targets if any(x in u for x in DISTRICTS) and u not in final_dict["State_Dept_Verified"]])
     
-    # Calculate Totals
-    total_static = sum(len(v) for k,v in STATIC_TARGETS.items())
-    total_verified = len(live_dynamic)
-    grand_total = total_static + total_verified
-    
+    # Save
     with open(OUTPUT_FILE, "w") as f:
-        json.dump(final_list, f, indent=2)
-    
-    print("-" * 50)
-    print(f"[SUCCESS] Generation Complete.")
-    print(f"[STATS] Seed Targets: {total_static}")
-    print(f"[STATS] Candidates Scanned: {len(all_dynamic)}")
-    print(f"[STATS] Validated Live: {total_verified}")
-    print(f"[RESULT] Final Target Database: {grand_total} URLs")
-    print(f"[OUTPUT] Saved to '{OUTPUT_FILE}'")
-    print("-" * 50)
+        json.dump(final_dict, f, indent=2)
+        
+    print(f"\n[SUCCESS] Target List Saved to {OUTPUT_FILE}")
+    print(f"         Total Targets Ready: {sum(len(v) for v in final_dict.values())}")
 
 if __name__ == "__main__":
-    generate_and_validate()
+    try:
+        generate_and_validate()
+    except KeyboardInterrupt:
+        print("\n[SYSTEM] Generation Aborted.")
