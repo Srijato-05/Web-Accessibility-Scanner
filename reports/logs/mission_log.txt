@@ -1,0 +1,46 @@
+2026-02-11 23:58:44,814 - [INFO] - Initializing Agent Squad...
+2026-02-11 23:58:44,817 - [INFO] - [INIT] Mission MISSION_0211_2358 Launched: Find the search input box and the search button.
+2026-02-11 23:58:45,477 - [INFO] - Launching Browser (Visible Mode)...
+2026-02-11 23:58:46,324 - [INFO] - --- [STEP 1] PHASE: STARTED ---
+2026-02-11 23:58:46,325 - [INFO] - Navigating to https://www.india.gov.in...
+2026-02-11 23:58:50,124 - [INFO] - Hydrating DOM (Scrolling)...
+2026-02-11 23:58:53,191 - [INFO] - --- [STEP 2] PHASE: ANALYZING ---
+2026-02-11 23:58:53,191 - [INFO] - Initiating Deep Perception Scan...
+2026-02-11 23:58:53,267 - [INFO] - Sensor: Successfully acquired 177 elements.
+2026-02-11 23:59:11,437 - [INFO] - --- [STEP 3] PHASE: NAVIGATING ---
+2026-02-11 23:59:16,902 - [INFO] - --- [STEP 4] PHASE: PLANNING ---
+2026-02-12 00:00:47,982 - [INFO] - --- [STEP 5] PHASE: NAVIGATING ---
+2026-02-12 00:00:53,073 - [INFO] - --- [STEP 6] PHASE: PLANNING ---
+2026-02-12 00:01:57,523 - [INFO] - --- [STEP 7] PHASE: NAVIGATING ---
+2026-02-12 00:01:58,613 - [INFO] - --- [STEP 8] PHASE: PLANNING ---
+2026-02-12 00:02:39,115 - [INFO] - --- [STEP 9] PHASE: ANALYZING ---
+2026-02-12 00:02:39,115 - [INFO] - Initiating Deep Perception Scan...
+2026-02-12 00:02:39,168 - [INFO] - Sensor: Successfully acquired 184 elements.
+2026-02-12 00:02:42,529 - [INFO] - --- [STEP 10] PHASE: NAVIGATING ---
+2026-02-12 00:02:47,470 - [INFO] - --- [STEP 11] PHASE: PLANNING ---
+2026-02-12 00:02:47,470 - [INFO] - >>> CONTEXT SWITCH DETECTED: Skipping Plan, Forcing Analysis. <<<
+2026-02-12 00:02:48,518 - [INFO] - --- [STEP 12] PHASE: ANALYZING ---
+2026-02-12 00:02:48,518 - [INFO] - Initiating Deep Perception Scan...
+2026-02-12 00:02:48,538 - [INFO] - Sensor: Successfully acquired 113 elements.
+2026-02-12 00:02:50,655 - [INFO] - --- [STEP 13] PHASE: NAVIGATING ---
+2026-02-12 00:02:55,488 - [INFO] - --- [STEP 14] PHASE: PLANNING ---
+2026-02-12 00:02:56,528 - [INFO] - --- [STEP 15] PHASE: ANALYZING ---
+2026-02-12 00:02:56,529 - [INFO] - Initiating Deep Perception Scan...
+2026-02-12 00:02:56,548 - [INFO] - Sensor: Successfully acquired 113 elements.
+2026-02-12 00:02:58,650 - [INFO] - --- [STEP 16] PHASE: NAVIGATING ---
+2026-02-12 00:03:03,483 - [INFO] - --- [STEP 17] PHASE: PLANNING ---
+2026-02-12 00:04:13,609 - [INFO] - --- [STEP 18] PHASE: NAVIGATING ---
+2026-02-12 00:04:14,680 - [INFO] - --- [STEP 19] PHASE: PLANNING ---
+2026-02-12 00:05:01,266 - [INFO] - --- [STEP 20] PHASE: ANALYZING ---
+2026-02-12 00:05:01,266 - [INFO] - Initiating Deep Perception Scan...
+2026-02-12 00:05:01,283 - [INFO] - Sensor: Successfully acquired 113 elements.
+2026-02-12 00:05:03,338 - [INFO] - --- [STEP 21] PHASE: NAVIGATING ---
+2026-02-12 00:05:08,153 - [INFO] - --- [STEP 22] PHASE: PLANNING ---
+2026-02-12 00:05:52,855 - [INFO] - --- [STEP 23] PHASE: ANALYZING ---
+2026-02-12 00:05:52,855 - [INFO] - Initiating Deep Perception Scan...
+2026-02-12 00:05:52,874 - [INFO] - Sensor: Successfully acquired 113 elements.
+2026-02-12 00:05:54,830 - [INFO] - --- [STEP 24] PHASE: NAVIGATING ---
+2026-02-12 00:05:59,719 - [INFO] - --- [STEP 25] PHASE: PLANNING ---
+2026-02-12 00:06:57,675 - [INFO] - [STOP] Mission ended: ANALYZING
+2026-02-12 00:06:57,676 - [INFO] - [REPORT] 📄 Data saved to: F:\Projects\2Fast2MCP\reports\data\report_MISSION_0211_2358.json
+2026-02-12 00:06:58,163 - [INFO] - Browser Closed. Mission Terminated.

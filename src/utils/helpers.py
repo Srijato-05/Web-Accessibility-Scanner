@@ -3,6 +3,24 @@ import re
 import time
 import asyncio
 import json
+import sys
+import logging
+from datetime import datetime
+from urllib.parse import urlparse
+
+# ==========================================
+#        WINDOWS UNICODE CONSOLE FIX
+# ==========================================
+# This prevents 'charmap' errors on Windows PowerShell when logging emojis/symbols
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        # Fallback for older Python versions
+        import codecs
+        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
 
 # ==========================================
 #        SYSTEM CONFIGURATION
@@ -13,10 +31,12 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 EVIDENCE_DIR = os.path.join(REPORT_DIR, "evidence")
 DATA_DIR = os.path.join(REPORT_DIR, "data")
+LOGS_DIR = os.path.join(REPORT_DIR, "logs")
 
 # Ensure directories exist
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 # ==========================================
 #        TUNING PARAMETERS
@@ -42,7 +62,7 @@ WEIGHT_MOBILE_FAIL = 15          # Deduction for horizontal scroll issues
 WEIGHT_PRIVACY_LEAK = 30         # Deduction for exposing PII (Aadhaar/PAN)
 
 # ==========================================
-#        THE DEEP AUDITOR ENGINE
+#        THE DEEP AUDITOR ENGINE (JS)
 # ==========================================
 class DeepAuditor:
     """
@@ -263,7 +283,7 @@ class DeepAuditor:
     """
 
 # ==========================================
-#        CORE HELPER FUNCTIONS
+#        CORE HELPER FUNCTIONS (PHASE 1)
 # ==========================================
 
 def sanitize_url(input_url):
@@ -302,7 +322,8 @@ def get_file_paths(url, category):
     Generates consistent file paths for Evidence, Reports, and Crash Dumps.
     """
     try:
-        domain = url.split("//")[-1].split("/")[0].replace("www.", "")
+        parsed = urlparse(url)
+        domain = parsed.netloc.replace("www.", "")
         clean_name = re.sub(r'[^\w\-_]', '_', domain)
     except:
         clean_name = "unknown_target"
@@ -311,10 +332,12 @@ def get_file_paths(url, category):
     category_dir = os.path.join(REPORT_DIR, "evidence", category)
     os.makedirs(category_dir, exist_ok=True)
 
+    timestamp = datetime.now().strftime("%Y%m%d")
+
     return {
         "json": os.path.join(DATA_DIR, f"report_{clean_name}.json"),
-        "img": os.path.join(category_dir, f"{clean_name}.png"),
-        "crash": os.path.join(category_dir, f"CRASH_{clean_name}.png")
+        "img": os.path.join(category_dir, f"{clean_name}_{timestamp}.png"),
+        "crash": os.path.join(category_dir, f"CRASH_{clean_name}_{timestamp}.png")
     }
 
 def calculate_drishti_score(violations, js_errors, load_time, missing_lang, is_secure, tracker_count, mobile_issue, pii_leak):
@@ -422,3 +445,43 @@ async def smart_scroll_and_hydrate(page):
 
     except Exception as e:
         print(f"[WARN] Hydration partial failure: {str(e)[:100]}")
+
+# ==========================================
+#        NEW: PILLAR 2 & 3 AGENT UTILITIES
+# ==========================================
+
+def clean_xpath(xpath):
+    """
+    Cleans Playwright/Axe XPath artifacts for the Navigator.
+    Removes 'xpath=' prefix and trims whitespace.
+    """
+    if not xpath: return ""
+    return xpath.replace("xpath=", "").strip()
+
+def is_indian_gov_url(url):
+    """
+    Verify if the target is an official Indian Govt domain.
+    Used by the Architect to apply specific heuristic rules.
+    """
+    patterns = [r"\.gov\.in", r"\.nic\.in", r"digitalindia\.gov\.in", r"\.org\.in", r"\.ac\.in"]
+    return any(re.search(p, url, re.IGNORECASE) for p in patterns)
+
+def format_violation_for_llm(violation):
+    """
+    Simplifies a complex Axe violation for the Patch Surgeon (LLM).
+    Reduces token usage by stripping unnecessary metadata.
+    """
+    nodes = violation.get("nodes", [{}])
+    target = nodes[0].get("target", [""])[0] if nodes else ""
+    
+    return {
+        "id": violation.get("id"),
+        "impact": violation.get("impact"),
+        "description": violation.get("description"),
+        "help": violation.get("help"),
+        "xpath": clean_xpath(target)
+    }
+
+def get_timestamp():
+    """Returns standardized timestamp for logging."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
