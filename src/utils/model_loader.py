@@ -1,269 +1,109 @@
+"""
+Drishti-AX: Neural Nexus (The Titan Bridge)
+Module: src.utils.model_loader
+Version: Sentinel-15.1 "Titan Bridge"
+Author: Sentinel Core System
+Timestamp: 2026-02-12 23:15:00 UTC
+
+Description:
+    The interface between the Python Agents and the C++ Llama Engine.
+    
+    [CRITICAL FIX] Added 'generate_code' adapter method to prevent AttributeError.
+    [OPTIMIZATION] Tuned for GTX 1650 (4GB VRAM) using Qwen-2.5-3B.
+"""
+
 import os
 import sys
 import logging
-import threading
-import time
-import json
-import requests
-from typing import List, Union, Optional, Dict, Any
+import torch
 
-# Third-Party AI Libraries
+# ==============================================================================
+#        WINDOWS CUDA 13.0 DLL INJECTION
+# ==============================================================================
+# Forces Python to look in the standard CUDA installation path for DLLs
+cuda_path = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin"
+if os.path.exists(cuda_path):
+    os.add_dll_directory(cuda_path)
+    os.environ["PATH"] = cuda_path + os.pathsep + os.environ["PATH"]
+
 try:
-    import torch
-    from sentence_transformers import SentenceTransformer, util
-    from langchain_ollama import ChatOllama
-    import ollama
-except ImportError as e:
-    print(f"[CRITICAL] Missing Dependency: {e}")
-    print("Run: uv pip install torch sentence-transformers langchain-ollama ollama")
+    from llama_cpp import Llama
+except ImportError:
+    print("FATAL: llama-cpp-python not installed. Run 'uv pip install...'")
     sys.exit(1)
 
-# ==========================================
-#        LOGGING CONFIGURATION
-# ==========================================
-# Setup a dedicated logger for the AI Engine
-logger = logging.getLogger("AI_ENGINE")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - [AI_ENGINE] - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+logger = logging.getLogger("NeuralNexus")
+logger.setLevel(logging.INFO)
 
-# ==========================================
-#        LOCAL AI MANAGER (SINGLETON)
-# ==========================================
-class LocalAI:
-    """
-    The Central Nervous System for Drishti-AX.
-    Manages connections to:
-    1. Local Inference Server (Ollama) -> Llama-3 (Reasoning) & Moondream (Vision)
-    2. Embedding Engine (Sentence-Transformers) -> MPNet (Semantic Search)
-    
-    Implements:
-    - Lazy Loading (Save RAM until needed)
-    - Automatic Retry Logic (For Ollama cold-starts)
-    - Thread-Safe Singleton Pattern (For Swarm access)
-    - Hardware Acceleration Detection (CUDA/MPS/CPU)
-    """
-    
-    _instance = None
-    _lock = threading.Lock()
-    
-    def __new__(cls):
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super(LocalAI, cls).__new__(cls)
-                cls._instance._initialized = False
-        return cls._instance
-
+class NeuralNexus:
     def __init__(self):
-        if self._initialized:
+        self.model_path = os.path.join("models", "Qwen2.5-3B-Instruct-Q4_K_M.gguf")
+        self.gpu_layers = -1  # -1 = Offload EVERYTHING to GPU
+        self.context_window = 4096
+        self.llm = None
+        
+        # Ignition Sequence
+        self._ignite()
+
+    def _ignite(self):
+        """
+        Bootstraps the Llama C++ Engine.
+        """
+        if not os.path.exists(self.model_path):
+            logger.error(f"BRAIN MISSING: Could not find model at {self.model_path}")
+            logger.error("Please run: uvx hf download bartowski/Qwen2.5-3B-Instruct-GGUF --include 'Qwen2.5-3B-Instruct-Q4_K_M.gguf' --local-dir ./models")
             return
-            
-        logger.info("Initializing Local AI Neural Engine (Lazy Mode)...")
-        
-        # 1. Hardware Detection
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            logger.info("Hardware Acceleration: NVIDIA CUDA Detected 🟢")
-        elif torch.backends.mps.is_available():
-            self.device = "mps" # For Mac M1/M2/M3
-            logger.info("Hardware Acceleration: Apple Metal (MPS) Detected 🟢")
-        else:
-            self.device = "cpu"
-            logger.warning("Hardware Acceleration: NONE (Running on CPU) 🟡")
-
-        # 2. Configuration
-        self.ollama_base_url = "http://localhost:11434"
-        self.reasoning_model_name = "llama3:8b"
-        self.vision_model_name = "moondream"
-        self.embedding_model_name = "sentence-transformers/all-mpnet-base-v2"
-        
-        # 3. State Flags (Lazy Load)
-        self._mpnet = None
-        self._llm_reasoning = None
-        self._vision_client = None
-        
-        self._initialized = True
-
-    # ==========================================
-    #        COMPONENT 1: SEMANTIC SEARCH
-    # ==========================================
-    @property
-    def mpnet(self):
-        """
-        Lazy-loads the Sentence Transformer model.
-        Used for finding buttons by meaning (e.g., 'Submit' ~= 'Send').
-        """
-        if self._mpnet is None:
-            with self._lock:
-                if self._mpnet is None:
-                    try:
-                        logger.info(f"Loading Embedding Model ({self.embedding_model_name}) on {self.device}...")
-                        self._mpnet = SentenceTransformer(self.embedding_model_name, device=self.device)
-                        logger.info("Embedding Model Loaded Successfully.")
-                    except Exception as e:
-                        logger.critical(f"FATAL: Failed to load MPNet: {e}")
-                        # Fallback to prevent crash, though functionality is crippled
-                        self._mpnet = None
-        return self._mpnet
-
-    def get_embedding(self, text: Union[str, List[str]]) -> torch.Tensor:
-        """
-        Generates vector embeddings for a string or list of strings.
-        Returns a PyTorch Tensor.
-        """
-        model = self.mpnet
-        if not model:
-            logger.error("Embedding Engine unavailable.")
-            return torch.zeros((1, 768), device=self.device)
-            
-        try:
-            # Generate embeddings
-            embeddings = model.encode(text, convert_to_tensor=True, device=self.device, show_progress_bar=False)
-            return embeddings
-        except Exception as e:
-            logger.error(f"Embedding Generation Failed: {e}")
-            # Return zero tensor to prevent downstream crash
-            return torch.zeros((1, 768), device=self.device)
-
-    def compute_similarity(self, query_emb, corpus_embs):
-        """
-        Calculates Cosine Similarity between a query and a list of targets.
-        Used by the Semantic Sensor to rank buttons.
-        """
-        try:
-            return util.cos_sim(query_emb, corpus_embs)
-        except Exception as e:
-            logger.error(f"Similarity Computation Failed: {e}")
-            return torch.tensor([0.0])
-
-    # ==========================================
-    #        COMPONENT 2: REASONING (LLM)
-    # ==========================================
-    @property
-    def llm_reasoning(self):
-        """
-        Lazy-loads the LangChain Ollama wrapper.
-        Used for Planning (Architect) and Coding (Surgeon).
-        """
-        if self._llm_reasoning is None:
-            with self._lock:
-                if self._llm_reasoning is None:
-                    # Health Check Loop
-                    if not self._wait_for_ollama():
-                        return None
-                    
-                    logger.info(f"Connecting to Ollama ({self.reasoning_model_name})...")
-                    try:
-                        self._llm_reasoning = ChatOllama(
-                            model=self.reasoning_model_name,
-                            base_url=self.ollama_base_url,
-                            temperature=0.1,  # Strict logic (Low Creativity)
-                            num_ctx=8192,     # Large context window for DOM analysis
-                            keep_alive="1h"   # Keep model loaded in VRAM
-                        )
-                        logger.info("Reasoning Engine Connected.")
-                    except Exception as e:
-                        logger.error(f"Failed to connect to LangChain Ollama: {e}")
-                        return None
-        return self._llm_reasoning
-
-    def _wait_for_ollama(self, retries=5, delay=3) -> bool:
-        """
-        Pings the Ollama API to ensure it's up and running.
-        Retries automatically if the service is starting.
-        """
-        url = f"{self.ollama_base_url}/api/tags"
-        for i in range(retries):
-            try:
-                response = requests.get(url, timeout=2)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.ConnectionError:
-                logger.warning(f"Ollama Unreachable (Attempt {i+1}/{retries}). Is 'ollama serve' running?")
-                time.sleep(delay)
-            except Exception as e:
-                logger.error(f"Ollama Health Check Error: {e}")
-                return False
-        
-        logger.critical("FATAL: Ollama Service is OFFLINE. Start it via terminal or app.")
-        return False
-
-    def generate_code(self, prompt: str, system_role: str = "You are a WCAG Expert.") -> str:
-        """
-        Robust wrapper for LLM Code Generation.
-        Handles errors and creates a properly formatted prompt structure.
-        """
-        llm = self.llm_reasoning
-        if not llm:
-            return "/* Error: AI Engine Offline */"
 
         try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-            
-            messages = [
-                SystemMessage(content=f"{system_role} Output ONLY valid code/JSON. No markdown."),
-                HumanMessage(content=prompt)
-            ]
-            
-            response = llm.invoke(messages)
-            return response.content.strip()
-        except Exception as e:
-            logger.error(f"LLM Generation Failed: {e}")
-            return "/* Error: Generation Exception */"
-
-    # ==========================================
-    #        COMPONENT 3: VISION (VLM)
-    # ==========================================
-    def analyze_image(self, image_path: str, prompt: str = "Describe this UI element for accessibility.") -> str:
-        """
-        Uses Moondream (via Ollama raw API) to describe images.
-        Crucial for Pillar 3 (Alt-Text Generation).
-        """
-        if not os.path.exists(image_path):
-            logger.error(f"Image not found at path: {image_path}")
-            return "Error: Image Missing"
-
-        if not self._wait_for_ollama(retries=2):
-            return "Error: AI Vision Offline"
-
-        try:
-            # We use the raw 'ollama' lib here because LangChain's vision support varies
-            response = ollama.generate(
-                model=self.vision_model_name,
-                prompt=prompt,
-                images=[image_path],
-                stream=False
+            logger.info(f"Igniting Neural Nexus on GTX 1650...")
+            self.llm = Llama(
+                model_path=self.model_path,
+                n_gpu_layers=self.gpu_layers,
+                n_ctx=self.context_window,
+                n_batch=512,          # Optimized for 4GB VRAM
+                f16_kv=True,          # High-speed VRAM usage
+                flash_attn=True,      # CUDA 13.0 Optimization
+                verbose=False         # Keep console clean
             )
-            description = response.get('response', '').strip()
-            logger.info(f"Vision Analysis Complete ({len(description)} chars)")
-            return description
+            logger.info("Neural Nexus Online. Ready for Inference.")
         except Exception as e:
-            logger.error(f"Vision Model Failed: {e}")
-            return "Error: Vision Analysis Exception"
+            logger.critical(f"Ignition Failed: {e}")
+            self.llm = None
 
-# Global Singleton Instance
-# Import 'ai_engine' from anywhere in the project to access these features
-ai_engine = LocalAI()
+    def generate_code(self, prompt: str, system_role: str = "Assistant") -> str:
+        """
+        The Adapter Method.
+        Translates agent requests into Qwen-2.5 ChatML format.
+        """
+        if not self.llm:
+            logger.error("Engine is offline. Returning empty thought.")
+            return "[]"
 
-if __name__ == "__main__":
-    # Self-Test when running this file directly
-    print("--- Running AI Engine Diagnostics ---")
-    
-    # Test 1: Embedding
-    print("1. Testing MPNet...")
-    emb = ai_engine.get_embedding("Hello World")
-    print(f"   -> Embedding Shape: {emb.shape}")
-    
-    # Test 2: Ollama Connection
-    print("2. Testing Ollama Connection...")
-    status = ai_engine._wait_for_ollama(retries=1)
-    print(f"   -> Ollama Status: {'ONLINE' if status else 'OFFLINE'}")
-    
-    if status:
-        # Test 3: Generation
-        print("3. Testing Llama-3 Generation...")
-        res = ai_engine.generate_code("Return the JSON object {'status': 'ok'}")
-        print(f"   -> Response: {res}")
+        # Qwen-2.5 Strict ChatML Format
+        # <|im_start|>system
+        # {system_role}<|im_end|>
+        # <|im_start|>user
+        # {prompt}<|im_end|>
+        # <|im_start|>assistant
+        
+        formatted_prompt = (
+            f"<|im_start|>system\n{system_role}<|im_end|>\n"
+            f"<|im_start|>user\n{prompt}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+
+        try:
+            output = self.llm(
+                formatted_prompt,
+                max_tokens=1024,      # Allow long responses
+                stop=["<|im_end|>", "###"],
+                temperature=0.7,      # Creativity balance
+                echo=False
+            )
+            return output['choices'][0]['text'].strip()
+        except Exception as e:
+            logger.error(f"Inference Error: {e}")
+            return "[]"
+
+# Singleton Instance (This is what main_agent_runner imports)
+ai_engine = NeuralNexus()
